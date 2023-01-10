@@ -186,12 +186,12 @@ class DopeNode(object):
                 ImageSensor_msg,
                 queue_size=10
             )
-        self.pub_camera_info = \
-            rospy.Publisher(
-                rospy.get_param('~topic_publishing') + "/camera_info",
-                CameraInfo,
-                queue_size=10
-            )
+        # self.pub_camera_info = \
+        #     rospy.Publisher(
+        #         rospy.get_param('~topic_publishing') + "/camera_info",
+        #         CameraInfo,
+        #         queue_size=10
+        #     )
         self.pub_detections = \
             rospy.Publisher(
                 '~detected_objects',
@@ -206,37 +206,46 @@ class DopeNode(object):
             )
 
         # Start ROS subscriber
-        image_sub = message_filters.Subscriber(
-            rospy.get_param('~topic_camera'),
-            ImageSensor_msg
-        )
-        info_sub = message_filters.Subscriber(
-            rospy.get_param('~topic_camera_info'),
-            CameraInfo
-        )
-        ts = message_filters.TimeSynchronizer([image_sub, info_sub], 1)
-        ts.registerCallback(self.image_callback)
+        # image_sub = message_filters.Subscriber(
+        #     rospy.get_param('~topic_camera'),
+        #     ImageSensor_msg
+        # )
+        # info_sub = message_filters.Subscriber(
+        #     rospy.get_param('~topic_camera_info'),
+        #     CameraInfo
+        # )
+        # ts = message_filters.TimeSynchronizer([image_sub, info_sub], 1)
+        # ts.registerCallback(self.image_callback)
+        self.image_sub = ImageSensor_msg()
+        self.info_sub = CameraInfo()
+        rospy.Subscriber(rospy.get_param('~topic_camera'), ImageSensor_msg, self.image_subscriber, queue_size=15)
+
+        self.info_sub.P = [610.2532348632812, 0.0, 323.5705261230469, 0.0, 0.0, 608.9944458007812, 238.69918823242188, 0.0, 0.0, 0.0, 1.0, 0.0]
+        self.info_sub.K = [610.2532348632812, 0.0, 323.5705261230469, 0.0, 608.9944458007812, 238.69918823242188, 0.0, 0.0, 1.0]
+        self.info_sub.D = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+        # self.image_callback(self.image_sub, self.info_sub)
 
         print("Running DOPE...  (Listening to camera topic: '{}')".format(rospy.get_param('~topic_camera')))
         print("Ctrl-C to stop")
 
-    def image_callback(self, image_msg, camera_info):
+    def image_callback(self): #image_msg, camera_info
         """Image callback"""
 
-        img = self.cv_bridge.imgmsg_to_cv2(image_msg, "rgb8")
+        img = self.cv_bridge.imgmsg_to_cv2(self.image_sub, "rgb8")
         # cv2.imwrite('img.png', cv2.cvtColor(img, cv2.COLOR_BGR2RGB))  # for debugging
 
         # Update camera matrix and distortion coefficients
         if self.input_is_rectified:
-            P = np.matrix(camera_info.P, dtype='float64')
+            P = np.matrix(self.info_sub.P, dtype='float64')
             P.resize((3, 4))
             camera_matrix = P[:, :3]
             dist_coeffs = np.zeros((4, 1))
         else:
-            camera_matrix = np.matrix(camera_info.K, dtype='float64')
+            camera_matrix = np.matrix(self.info_sub.K, dtype='float64')
             camera_matrix.resize((3, 3))
-            dist_coeffs = np.matrix(camera_info.D, dtype='float64')
-            dist_coeffs.resize((len(camera_info.D), 1))
+            dist_coeffs = np.matrix(self.info_sub.D, dtype='float64')
+            dist_coeffs.resize((len(self.info_sub.D), 1))
 
         # Downscale image if necessary
         height, width, _ = img.shape
@@ -255,7 +264,7 @@ class DopeNode(object):
         draw = Draw(im)
 
         detection_array = Detection3DArray()
-        detection_array.header = image_msg.header
+        detection_array.header = self.image_sub.header
 
         for m in self.models:
             publish_belief_img = (self.pub_belief[m].get_num_connections() > 0)
@@ -287,7 +296,7 @@ class DopeNode(object):
                 dims = tuple(dims)
 
                 pose_msg = PoseStamped()
-                pose_msg.header = image_msg.header
+                pose_msg.header = self.image_sub.header
                 CONVERT_SCALE_CM_TO_METERS = 100
                 pose_msg.pose.position.x = loc[0] / CONVERT_SCALE_CM_TO_METERS
                 pose_msg.pose.position.y = loc[1] / CONVERT_SCALE_CM_TO_METERS
@@ -324,14 +333,14 @@ class DopeNode(object):
             # Publish the belief image
             if publish_belief_img:
                 belief_img = self.cv_bridge.cv2_to_imgmsg(np.array(im_belief)[..., ::-1], "bgr8")
-                belief_img.header = camera_info.header
+                belief_img.header = self.info_sub.header
                 self.pub_belief[m].publish(belief_img)
 
         # Publish the image with results overlaid
         rgb_points_img = CvBridge().cv2_to_imgmsg(np.array(im)[..., ::-1], "bgr8")
-        rgb_points_img.header = camera_info.header
+        rgb_points_img.header = self.info_sub.header
         self.pub_rgb_dope_points.publish(rgb_points_img)
-        self.pub_camera_info.publish(camera_info)
+        # self.pub_camera_info.publish(camera_info)
         self.pub_detections.publish(detection_array)
         self.publish_markers(detection_array)
 
@@ -408,6 +417,10 @@ class DopeNode(object):
         self.prev_num_detections = len(detection_array.detections)
 
         self.pub_markers.publish(markers)
+    
+    def image_subscriber(self, msg):
+        self.image_sub = msg
+        self.image_callback()
 
 
 def rotate_vector(vector, quaternion):
