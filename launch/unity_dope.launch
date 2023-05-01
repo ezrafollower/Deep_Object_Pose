@@ -1,0 +1,12 @@
+<launch>
+  <arg name="config" default="$(find dope)/config/config_pose.yaml" doc="Path to parameter config file"/>
+
+  <node name="dope" pkg="dope" type="dope" output="screen" clear_params="true">
+    <rosparam file="$(arg config)"/>
+  </node>
+
+	<node pkg="image_transport" type="republish" name="compress_raw" args="compressed in:=/unity/camera_under raw out:=/dope/image_raw"/>
+
+	<node pkg="image_transport" type="republish" name="raw_compress" args="raw in:=/dope/rgb_points compressed out:=/unity/detections"/>
+
+</launch>
